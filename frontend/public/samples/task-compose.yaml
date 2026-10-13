@@ -1,0 +1,85 @@
+openapi: 3.0.3
+info:
+  title: 阶段二任务验收服务
+  version: 1.0.0
+paths:
+  /items/{id}:
+    get:
+      summary: 第一步，检查 URL 编码及重复 query
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: ids
+          in: query
+          schema:
+            type: array
+            items:
+              type: integer
+        - name: Authorization
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功，回显脱敏请求
+  /check:
+    post:
+      summary: 第二步，JSON 类型、失败与超时
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: integer
+            default: 200
+        - name: delay
+          in: query
+          schema:
+            type: number
+            default: 0
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, payload, ids]
+              properties:
+                enabled:
+                  type: boolean
+                  default: true
+                payload:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                ids:
+                  type: array
+                  items:
+                    type: integer
+      responses:
+        '200':
+          description: 成功
+        '500':
+          description: 模拟失败
+  /finish:
+    get:
+      summary: 第三步，失败后应跳过
+      responses:
+        '200':
+          description: 成功
+  /disconnect:
+    get:
+      summary: 模拟连接中断
+      responses:
+        '200':
+          description: 实际将直接断开连接
+  /redirect:
+    get:
+      summary: 模拟重定向，不应自动请求 finish
+      responses:
+        '302':
+          description: 重定向
