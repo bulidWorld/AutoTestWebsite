@@ -19,6 +19,7 @@ const modal = ref<'project' | 'upload' | 'delete' | null>(null), editing = ref<M
 const rememberDialogTrigger = useDialogFocus(() => modal.value !== null)
 const name = ref(''), description = ref(''), upload = ref<File>(), updating = ref(false)
 const deletion = ref<Model<'DeletionPreview'>>(), deleteFile = ref<Model<'YamlFile'>>()
+const deleteProject = ref<Model<'Project'>>()
 const base = computed(() => `/projects/${project.value?.id}`)
 const fileBase = computed(() => `${base.value}/yaml-files/${file.value?.id}`)
 const pretty = (v: unknown) => JSON.stringify(v, null, 2)
@@ -93,16 +94,20 @@ async function saveUpload() {
     modal.value = null; notice.value = `已保存版本 v${result.version.version}，包含 ${result.version.interface_count} 个接口`
   })
 }
-async function previewDelete(item?: Model<'YamlFile'>) {
+async function previewDelete(item?: Model<'YamlFile'>, target: Model<'Project'> | undefined = project.value) {
+  if (!target || taskDirty.value) return
   rememberDialogTrigger()
-  await run(async () => { deleteFile.value = item; deletion.value = await request<Model<'DeletionPreview'>>(`${base.value}${item ? `/yaml-files/${item.id}` : ''}/deletion-preview`); modal.value = 'delete' })
+  await run(async () => {
+    const preview = await request<Model<'DeletionPreview'>>(`/projects/${target.id}${item ? `/yaml-files/${item.id}` : ''}/deletion-preview`)
+    deleteProject.value = target; deleteFile.value = item; deletion.value = preview; modal.value = 'delete'
+  })
 }
 async function confirmDelete() {
   await run(async () => {
-    if (!deletion.value?.can_delete) return
-    await request(`${base.value}${deleteFile.value ? `/yaml-files/${deleteFile.value.id}` : ''}?confirm=true`, 'DELETE')
+    if (!deletion.value?.can_delete || !deleteProject.value) return
+    await request(`/projects/${deleteProject.value.id}${deleteFile.value ? `/yaml-files/${deleteFile.value.id}` : ''}?confirm=true`, 'DELETE')
     if (deleteFile.value) { if (file.value?.id === deleteFile.value.id) { file.value = undefined; detail.value = undefined }; await refreshProject() }
-    else { project.value = undefined; file.value = undefined; page.value = 1; await loadProjects() }
+    else { project.value = undefined; file.value = undefined; detail.value = undefined; content.value = undefined; files.value = []; page.value = 1; await loadProjects() }
     modal.value = null; notice.value = '删除成功'
   })
 }
@@ -125,14 +130,14 @@ onMounted(() => run(loadProjects))
       <div class="sidebar-bottom"><div class="workspace-mark"><UiIcon name="code"/><span>OpenAPI 3.0.x<small>接口定义 · 编排 · 执行</small></span></div></div>
     </aside>
     <main>
-      <header class="app-header"><div class="breadcrumbs"><button class="link" :disabled="busy || taskDirty" @click="back">工作空间</button><UiIcon name="chevron" :size="13"/><span>{{ project?.name || '项目管理' }}</span><template v-if="project"><UiIcon name="chevron" :size="13"/><strong>{{ projectTab === 'assets' ? '接口资产' : '任务编排' }}</strong></template></div><div v-if="project" class="actions"><button class="text-button" :disabled="busy" @click="projectForm(project)"><UiIcon name="settings"/>项目设置</button><details class="action-menu"><summary aria-label="更多项目操作"><UiIcon name="more"/></summary><div><button class="danger" :disabled="busy || taskDirty" @click="previewDelete()">删除项目</button></div></details></div><span v-else class="header-label">自动化接口测试</span></header>
+      <header class="app-header"><div class="breadcrumbs"><button class="link" :disabled="busy || taskDirty" @click="back">工作空间</button><UiIcon name="chevron" :size="13"/><span>{{ project?.name || '项目管理' }}</span><template v-if="project"><UiIcon name="chevron" :size="13"/><strong>{{ projectTab === 'assets' ? '接口资产' : '任务编排' }}</strong></template></div><div v-if="project" class="actions"><button class="text-button" :disabled="busy" @click="projectForm(project)"><UiIcon name="settings"/>项目设置</button><button class="text-button danger" :disabled="busy || taskDirty" @click="previewDelete()"><UiIcon name="trash"/>删除项目</button></div><span v-else class="header-label">自动化接口测试</span></header>
       <div class="page-content">
       <div v-if="error && !modal" class="alert" role="alert"><strong>{{ error.detail }}</strong><div v-for="issue in error.issues" :key="issue.location"><code>{{ issue.location }}</code> · {{ issue.reason }}</div><small v-if="error.code">{{ error.code }}</small><small v-if="error.requestId"> 请求 ID：{{ error.requestId }}</small><button :disabled="busy" @click="run(project ? refreshProject : loadProjects)">重试</button></div>
       <div v-if="notice" class="success" role="status">{{ notice }}</div><div v-if="busy && (!project || projectTab === 'assets')" class="loading" role="status">正在处理…</div>
       <template v-if="!project">
         <section class="heading"><div><div class="eyebrow">PROJECTS</div><h1>项目管理</h1><p>集中管理项目、YAML 文件与接口定义。</p></div><button class="primary" :disabled="busy" @click="projectForm()"><UiIcon name="plus"/>新建项目</button></section>
         <form class="toolbar" @submit.prevent="page = 1; run(loadProjects)"><input v-model="search" placeholder="按项目名称搜索" aria-label="项目名称搜索"><button :disabled="busy">搜索</button><span>共 {{ total }} 个项目</span></form>
-        <div class="project-grid"><article v-for="item in projects" :key="item.id" class="project-card"><div class="card-top"><span class="folder"><UiIcon name="folder" :size="24"/></span><button class="link" :disabled="busy" @click="projectForm(item)">编辑</button></div><button class="project-title" :disabled="busy" @click="openProject(item.id)">{{ item.name }}</button><p>{{ item.description || '暂无描述' }}</p><div class="metrics"><span><b>{{ item.yaml_file_count }}</b> YAML 文件</span><span><b>{{ item.interface_count }}</b> 个接口</span></div><footer><small>更新于 {{ time(item.updated_at) }}</small><button class="link" :disabled="busy" @click="openProject(item.id)">进入项目 →</button></footer></article></div>
+        <div class="project-grid"><article v-for="item in projects" :key="item.id" class="project-card"><div class="card-top"><span class="folder"><UiIcon name="folder" :size="24"/></span><div class="actions"><button class="link" :disabled="busy" @click="projectForm(item)">编辑</button><button class="text-button danger" :disabled="busy" :aria-label="`删除项目 ${item.name}`" @click="previewDelete(undefined, item)"><UiIcon name="trash" :size="14"/>删除</button></div></div><button class="project-title" :disabled="busy" @click="openProject(item.id)">{{ item.name }}</button><p>{{ item.description || '暂无描述' }}</p><div class="metrics"><span><b>{{ item.yaml_file_count }}</b> YAML 文件</span><span><b>{{ item.interface_count }}</b> 个接口</span></div><footer><small>更新于 {{ time(item.updated_at) }}</small><button class="link" :disabled="busy" @click="openProject(item.id)">进入项目 →</button></footer></article></div>
         <div v-if="!projects.length && !busy && !error" class="empty"><h3>{{ search ? '未找到匹配项目' : '创建你的第一个项目' }}</h3><p>创建项目后即可导入 OpenAPI YAML，浏览接口与历史版本。</p></div>
         <div class="pagination"><button :disabled="busy || page <= 1" @click="page--; run(loadProjects)">上一页</button><span>{{ page }} / {{ Math.max(1, Math.ceil(total / 12)) }}</span><button :disabled="busy || page * 12 >= total" @click="page++; run(loadProjects)">下一页</button></div>
       </template>
@@ -158,7 +163,7 @@ onMounted(() => run(loadProjects))
       <div v-if="error" class="alert" role="alert"><strong>{{ error.detail }}</strong><div v-for="issue in error.issues" :key="issue.location"><code>{{ issue.location }}</code><p>{{ issue.reason }}</p></div><small>{{ error.code }} {{ error.requestId ? '请求 ID：' + error.requestId : '' }}</small></div>
       <form v-if="modal === 'project'" @submit.prevent="saveProject"><label>项目名称 <input v-model="name" required maxlength="120" autofocus placeholder="例如：订单服务"></label><label>项目描述 <textarea v-model="description" maxlength="2000" rows="4" placeholder="描述项目用途"></textarea></label><div class="dialog-actions"><button type="button" :disabled="busy" @click="modal = null">取消</button><button class="primary" :disabled="busy">{{ busy ? '保存中…' : '保存项目' }}</button></div></form>
       <form v-else-if="modal === 'upload'" @submit.prevent="saveUpload"><label>逻辑文件名 <input v-model="name" :disabled="updating" required maxlength="120" placeholder="例如：订单接口"></label><label class="upload-box">选择 YAML 文件<input type="file" accept=".yaml,.yml" required @change="pickFile"><span>{{ upload?.name || 'UTF-8 · OpenAPI 3.0.x · 最大 5 MiB' }}</span></label><p v-if="updating">成功后新增版本，并将其设为当前版本；历史版本保持只读。</p><p>不支持外部引用、组合 Schema、cookie 参数及非 JSON 请求体。解析错误会显示具体位置。</p><div class="dialog-actions"><button type="button" :disabled="busy" @click="modal = null">取消</button><button class="primary" :disabled="busy">{{ busy ? '正在校验并上传…' : '上传并保存' }}</button></div></form>
-      <template v-else-if="deletion"><p>将永久删除「{{ deleteFile?.name || project?.name }}」及以下关联数据，此操作无法撤销。</p><div class="delete-counts"><span>文件 {{ deletion.yaml_file_count }}</span><span>版本 {{ deletion.version_count }}</span><span>接口 {{ deletion.interface_count }}</span><span>任务 {{ deletion.task_count }}</span><span>运行记录 {{ deletion.run_count }}</span></div><div v-if="!deletion.can_delete" class="alert"><strong>当前无法删除</strong><p v-for="reason in deletion.blocking_reasons" :key="reason">{{ reason }}</p></div><div class="dialog-actions"><button :disabled="busy" @click="modal = null">取消</button><button class="danger solid" :disabled="busy || !deletion.can_delete" @click="confirmDelete">{{ busy ? '删除中…' : '确认永久删除' }}</button></div></template>
+      <template v-else-if="deletion"><p>将永久删除「{{ deleteFile?.name || deleteProject?.name }}」及以下关联数据，此操作无法撤销。</p><div class="delete-counts"><span>文件 {{ deletion.yaml_file_count }}</span><span>版本 {{ deletion.version_count }}</span><span>接口 {{ deletion.interface_count }}</span><span>任务 {{ deletion.task_count }}</span><span>运行记录 {{ deletion.run_count }}</span></div><div v-if="!deletion.can_delete" class="alert"><strong>当前无法删除</strong><p v-for="reason in deletion.blocking_reasons" :key="reason">{{ reason }}</p></div><div class="dialog-actions"><button :disabled="busy" @click="modal = null">取消</button><button class="danger solid" :disabled="busy || !deletion.can_delete" @click="confirmDelete">{{ busy ? '删除中…' : '确认永久删除' }}</button></div></template>
     </section></div>
   </div>
 </template>
