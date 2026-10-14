@@ -131,7 +131,7 @@ export interface paths {
         put?: never;
         /**
          * 运行任务
-         * @description 先静态校验配置、step_id 本任务归属、参数依赖及提取表达式；失败 400，不发请求。锁定任务行，queued/running 存在则 409；事务保存不可变配置快照、运行步骤及参数结果，返回 202。Pipeline 1 按参数顺序初始化：fixed 取固定值，REST 执行引用步骤并从响应提取；同一步骤在本次运行只请求一次，多个参数共享响应。源步骤首次执行前校验其所有绑定只能使用已初始化参数，禁止循环和后序依赖。所有初始化成功后，Pipeline 2 按步骤序号执行未被参数引用的步骤，初始化步骤不重复执行；全部步骤均为初始化步骤时允许直接成功。无并行、重试或自动重定向。每步发送前提交请求记录，发送后保存响应；HTTP 2xx 才成功。HTTP 错误、连接失败、超时、非 JSON、字段缺失、null 或提取类型错误导致运行失败，未执行参数及步骤跳过；提取失败同时将源运行步骤标记 failed。不同任务独立运行，关闭页面不终止执行。重启将未结束运行和正在执行的参数/步骤标记 EXECUTION_INTERRUPTED，未执行项跳过，不续跑。地址前缀正确拼接，path/query 编码，query 数组重复键，对象 query 拒绝，JSON 保留结构。当前阶段无需认证。
+         * @description 先静态校验配置、step_id 本任务归属、参数依赖及提取表达式；失败 400，不发请求。锁定任务行，queued/running 存在则 409；事务保存不可变配置快照、运行步骤及参数结果，返回 202。先初始化 fixed 参数，再按步骤序号发送请求；每步完成后执行绑定表达式并赋值全局参数，后续步骤只能引用已赋值的参数。同一步骤只请求一次，多个参数共享响应。 无并行、重试或自动重定向。每步发送前提交请求记录，发送后保存响应；HTTP 2xx 才成功。HTTP 错误、连接失败、超时、非 JSON、字段缺失、null 或提取类型错误导致运行失败，未执行参数及步骤跳过；提取失败同时将源运行步骤标记 failed。不同任务独立运行，关闭页面不终止执行。重启将未结束运行和正在执行的参数/步骤标记 EXECUTION_INTERRUPTED，未执行项跳过，不续跑。地址前缀正确拼接，path/query 编码，query 数组重复键，对象 query 拒绝，JSON 保留结构。当前阶段无需认证。
          */
         post: operations["startTaskRun"];
         delete?: never;
@@ -200,26 +200,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/projects/{project_id}/tasks/{task_id}/parameters/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 预览 REST 全局参数
-         * @description 显式预览发送真实 HTTP 请求。提交有序参数及步骤配置，步骤必须包含已保存稳定 ID，按参数初始化顺序执行所引用步骤至目标参数；同一步骤仅请求一次。仅执行初始化依赖步骤，不执行后续任务步骤，不创建任务运行或保存配置；后续运行仍重新获取。 步骤 ID 必须属于路径中的任务。当前阶段无需认证。
-         */
-        post: operations["previewRestParameter"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -277,206 +257,6 @@ export interface components {
              * @example 暂不支持 text/plain 请求体
              */
             reason: string;
-        };
-        /**
-         * @description 保留 JSON 类型的固定值；类型与 value_type 或接口 Schema 一致；不支持 null。敏感值在响应中使用 redacted 标记并省略 value。
-         * @example {
-         *       "order_id": 10
-         *     }
-         */
-        Value: string | number | boolean | Record<string, never> | unknown[];
-        /**
-         * @description 全局参数支持固定或 REST 来源；数组顺序决定初始化顺序。
-         * @example {
-         *       "name": "order_id",
-         *       "value_type": "integer",
-         *       "source_type": "rest",
-         *       "rest_source": {
-         *         "step_id": 1,
-         *         "extract_expression": "data.a"
-         *       },
-         *       "sensitive": false
-         *     }
-         */
-        GlobalParameterInput: components["schemas"]["FixedParameterInput"] | components["schemas"]["RestParameterInput"];
-        /**
-         * @description 参数配置详情；fixed 返回非敏感 value，rest 返回配置及接口名称，不返回缓存预览值。敏感字面绑定脱敏规则与任务步骤相同。
-         * @example {
-         *       "name": "order_id",
-         *       "value_type": "integer",
-         *       "source_type": "rest",
-         *       "rest_source": {
-         *         "step_id": 1,
-         *         "extract_expression": "data.a"
-         *       },
-         *       "sensitive": false,
-         *       "position": 1,
-         *       "redacted": false,
-         *       "interface_name": "获取订单 ID",
-         *       "file_name": "订单接口",
-         *       "current_version": 1,
-         *       "has_new_version": false,
-         *       "id": 1
-         *     }
-         */
-        GlobalParameter: {
-            /**
-             * @description 参数名称
-             * @example token
-             */
-            name: string;
-            /**
-             * @description 固定值类型
-             * @example string
-             * @enum {string}
-             */
-            value_type: "string" | "integer" | "number" | "boolean" | "object" | "array";
-            /**
-             * @description 页面和日志脱敏标记
-             * @default false
-             * @example true
-             */
-            sensitive: boolean;
-            /**
-             * @description 取值来源
-             * @example rest
-             * @enum {string}
-             */
-            source_type: "fixed" | "rest";
-            value?: components["schemas"]["Value"];
-            rest_source?: components["schemas"]["RestParameterSourceView"];
-            /**
-             * @description 初始化序号
-             * @example 1
-             */
-            position: number;
-            /**
-             * @description 敏感值是否隐藏
-             * @example false
-             */
-            redacted: boolean;
-            /**
-             * @description 所引用步骤的接口名称；取 summary，缺省使用方法和路径。
-             * @example 获取订单 ID
-             */
-            interface_name?: string;
-            /**
-             * @description 逻辑文件名称
-             * @example 订单接口
-             */
-            file_name?: string;
-            /**
-             * @description REST 源文件当前版本
-             * @example 1
-             */
-            current_version?: number;
-            /**
-             * @description 是否有新版本，仅提示
-             * @example false
-             */
-            has_new_version?: boolean;
-            /**
-             * Format: int32
-             * @description 任务参数稳定 ID，供运行快照与结果关联；更新同名参数保留 ID。
-             * @example 1
-             */
-            id: number;
-        };
-        /**
-         * @description 全局参数支持固定或 REST 来源；数组顺序决定初始化顺序。
-         * @example {
-         *       "name": "order_id",
-         *       "value_type": "integer",
-         *       "source_type": "rest",
-         *       "rest_source": {
-         *         "step_id": 1,
-         *         "extract_expression": "data.a"
-         *       },
-         *       "sensitive": false
-         *     }
-         */
-        GlobalParameterEdit: components["schemas"]["FixedParameterEdit"] | components["schemas"]["RestParameterInput"];
-        /**
-         * @description 字面值绑定，整体保留类型。
-         * @example {
-         *       "kind": "literal",
-         *       "value": 10
-         *     }
-         */
-        LiteralBinding: {
-            /**
-             * @description 绑定方式
-             * @example literal
-             * @enum {string}
-             */
-            kind: "literal";
-            /**
-             * @description 保留 JSON 类型的固定值；类型与 value_type 或接口 Schema 一致；不支持 null。敏感值在响应中使用 redacted 标记并省略 value。
-             * @example {
-             *       "order_id": 10
-             *     }
-             */
-            value: components["schemas"]["Value"];
-        };
-        /**
-         * @description 整体引用一个全局参数；不支持字符串内模板。
-         * @example {
-         *       "kind": "global",
-         *       "parameter_name": "token"
-         *     }
-         */
-        GlobalBinding: {
-            /**
-             * @description 绑定方式
-             * @example global
-             * @enum {string}
-             */
-            kind: "global";
-            /**
-             * @description 全局参数名称
-             * @example token
-             */
-            parameter_name: string;
-        };
-        /**
-         * @description 字面值或整体全局参数引用。
-         * @example {
-         *       "kind": "global",
-         *       "parameter_name": "token"
-         *     }
-         */
-        Binding: components["schemas"]["LiteralBinding"] | components["schemas"]["GlobalBinding"];
-        /**
-         * @description 字段绑定；path/query/header 用参数名；body 用 JSON Pointer，根对象或数组用空字符串。禁止重复或祖先与子字段重叠绑定。
-         * @example {
-         *       "location": "header",
-         *       "name": "Authorization",
-         *       "binding": {
-         *         "kind": "global",
-         *         "parameter_name": "token"
-         *       }
-         *     }
-         */
-        FieldBinding: {
-            /**
-             * @description 参数位置
-             * @example header
-             * @enum {string}
-             */
-            location: "path" | "query" | "header" | "body";
-            /**
-             * @description 字段名或 JSON Pointer
-             * @example Authorization
-             */
-            name: string;
-            /**
-             * @description 字面值或整体全局参数引用。
-             * @example {
-             *       "kind": "global",
-             *       "parameter_name": "token"
-             *     }
-             */
-            binding: components["schemas"]["Binding"];
         };
         /**
          * @description 步骤配置；数组顺序决定执行顺序，id 存在时保留稳定 ID，新增或复制步骤省略 id。interface_id/file_id/version 必须指向本项目同一接口版本。 引用初始化步骤需先保存任务以获得稳定 ID，再配置 REST 参数。删除一个被参数引用的步骤必须在同次完整保存中移除或改绑所有引用，否则拒绝。
@@ -601,7 +381,7 @@ export interface components {
             execution_phase: "parameters" | "steps";
         };
         /**
-         * @description 原子保存完整任务配置，参数及步骤数组决定各自顺序。REST 来源仅保存本任务的稳定 step_id 和表达式，复用步骤的接口版本与绑定。新步骤先保存获得 ID，再配置 REST 引用；复制任务时重建全部步骤 ID 并映射参数引用。被引用步骤在参数阶段执行一次，不在后续步骤阶段重复执行。参数引用的初始化步骤只能使用该步骤首次执行前已初始化的全局参数，拒绝自身、后序依赖及循环；同一步骤可供多个参数提取同一次响应，不重新请求。绑定失败或提取失败导致运行失败；静态校验不发请求。删除被引用步骤必须同时解除或改绑引用。至少有一个步骤才允许运行；全为初始化步骤时 Pipeline 2 为空，初始化全部成功则运行成功。
+         * @description 原子保存完整任务配置，参数及步骤数组决定各自顺序。REST 来源仅保存本任务的稳定 step_id 和表达式，复用步骤的接口版本与绑定。新步骤先保存获得 ID，再配置 REST 引用；复制任务时重建全部步骤 ID 并映射参数引用。所有步骤按步骤数组顺序执行一次，每步完成后提取其绑定参数。参数引用的初始化步骤只能使用该步骤首次执行前已初始化的全局参数，拒绝自身、后序依赖及循环；同一步骤可供多个参数提取同一次响应，不重新请求。绑定失败或提取失败导致运行失败；静态校验不发请求。删除被引用步骤必须同时解除或改绑引用。至少有一个步骤才允许运行；全部请求及表达式赋值成功则运行成功。
          * @example {
          *       "name": "订单流程",
          *       "base_url": "https://api.example.com/service",
@@ -634,7 +414,7 @@ export interface components {
              */
             timeout_seconds: number;
             /**
-             * @description 有序全局参数配置，支持 fixed/rest；名称唯一，REST 只能引用前序参数。
+             * @description 有序全局参数配置，支持 fixed/rest；名称唯一，步骤只能引用固定参数或前序步骤已赋值的参数。
              * @example []
              */
             global_parameters: components["schemas"]["GlobalParameterEdit"][];
@@ -683,7 +463,7 @@ export interface components {
              */
             timeout_seconds: number;
             /**
-             * @description 有序全局参数配置，支持 fixed/rest；名称唯一，REST 只能引用前序参数。
+             * @description 有序全局参数配置，支持 fixed/rest；名称唯一，步骤只能引用固定参数或前序步骤已赋值的参数。
              * @example []
              */
             global_parameters: components["schemas"]["GlobalParameter"][];
@@ -1433,6 +1213,128 @@ export interface components {
             deleted: true;
         };
         /**
+         * @description 保留 JSON 类型的固定值；类型与 value_type 或接口 Schema 一致；不支持 null。敏感值在响应中使用 redacted 标记并省略 value。
+         * @example {
+         *       "order_id": 10
+         *     }
+         */
+        Value: string | number | boolean | Record<string, never> | unknown[];
+        /**
+         * @description 已有同名同类型敏感固定参数可省略 value 保留原值；新建、改名、改类型或从 REST 切换到 fixed 必须提供值。
+         * @example {
+         *       "name": "order_id",
+         *       "value_type": "integer",
+         *       "source_type": "fixed",
+         *       "value": 1,
+         *       "sensitive": false
+         *     }
+         */
+        FixedParameterEdit: {
+            /**
+             * @description 参数名称
+             * @example token
+             */
+            name: string;
+            /**
+             * @description 固定值类型
+             * @example string
+             * @enum {string}
+             */
+            value_type: "string" | "integer" | "number" | "boolean" | "object" | "array";
+            /**
+             * @description 页面和日志脱敏标记
+             * @default false
+             * @example true
+             */
+            sensitive: boolean;
+            /**
+             * @description 取值来源：固定值
+             * @default fixed
+             * @example fixed
+             * @enum {string}
+             */
+            source_type: "fixed";
+            value?: components["schemas"]["Value"];
+        };
+        /**
+         * @description 引用本任务一个具体 task_steps.id，复用该步骤的接口版本及请求绑定，禁止独立接口配置。表达式支持标识符点分字段和非负数组下标，如 data.a、data.items[0].id；不支持函数、脚本、通配符或运算。HTTP 2xx 且 JSON 响应才提取；缺字段、null 或类型不匹配失败，不隐式转换。
+         * @example {
+         *       "step_id": 1,
+         *       "extract_expression": "data.a"
+         *     }
+         */
+        RestParameterSource: {
+            /**
+             * Format: int32
+             * @description 本任务的稳定步骤 ID，与 step_index 二选一，不能引用其他任务或被移除步骤。
+             * @example 1
+             */
+            step_id?: number;
+            /**
+             * @description 本次任务提交的 steps 数组下标，从 0 开始；可引用尚未保存的新步骤，保存后转换为稳定 step_id。与 step_id 二选一。
+             * @example 0
+             */
+            step_index?: number;
+            /**
+             * @description 响应取值表达式，data.a 从 {"data":{"a":1}} 提取整数 1。
+             * @example data.a
+             */
+            extract_expression: string;
+        } & (unknown | unknown);
+        /**
+         * @description REST 动态参数配置；不得提交 value。预览结果只用于界面展示，每次任务运行重新获取。
+         * @example {
+         *       "name": "order_id",
+         *       "value_type": "integer",
+         *       "source_type": "rest",
+         *       "rest_source": {
+         *         "step_id": 1,
+         *         "extract_expression": "data.a"
+         *       },
+         *       "sensitive": false
+         *     }
+         */
+        RestParameterInput: {
+            /**
+             * @description 参数名称
+             * @example token
+             */
+            name: string;
+            /**
+             * @description 固定值类型
+             * @example string
+             * @enum {string}
+             */
+            value_type: "string" | "integer" | "number" | "boolean" | "object" | "array";
+            /**
+             * @description 页面和日志脱敏标记
+             * @default false
+             * @example true
+             */
+            sensitive: boolean;
+            /**
+             * @description 取值来源：REST 动态值
+             * @example rest
+             * @enum {string}
+             */
+            source_type: "rest";
+            rest_source: components["schemas"]["RestParameterSource"];
+        };
+        /**
+         * @description 全局参数支持固定或 REST 来源；固定值先初始化，REST 参数在对应步骤完成后赋值。
+         * @example {
+         *       "name": "order_id",
+         *       "value_type": "integer",
+         *       "source_type": "rest",
+         *       "rest_source": {
+         *         "step_id": 1,
+         *         "extract_expression": "data.a"
+         *       },
+         *       "sensitive": false
+         *     }
+         */
+        GlobalParameterEdit: components["schemas"]["FixedParameterEdit"] | components["schemas"]["RestParameterInput"];
+        /**
          * @description 新字面值必须有 value；编辑已有稳定步骤的相同字段可省略敏感 value 保留原值，绑定方式改变必须提供值。
          * @example {
          *       "kind": "literal",
@@ -1453,6 +1355,26 @@ export interface components {
              *     }
              */
             value?: components["schemas"]["Value"];
+        };
+        /**
+         * @description 整体引用一个全局参数；不支持字符串内模板。
+         * @example {
+         *       "kind": "global",
+         *       "parameter_name": "token"
+         *     }
+         */
+        GlobalBinding: {
+            /**
+             * @description 绑定方式
+             * @example global
+             * @enum {string}
+             */
+            kind: "global";
+            /**
+             * @description 全局参数名称
+             * @example token
+             */
+            parameter_name: string;
         };
         /**
          * @description 字面值或整体全局参数引用。
@@ -1493,6 +1415,109 @@ export interface components {
              *     }
              */
             binding: components["schemas"]["BindingEdit"];
+        };
+        /**
+         * @description 引用本任务一个具体 task_steps.id，复用该步骤的接口版本及请求绑定，禁止独立接口配置。表达式支持标识符点分字段和非负数组下标，如 data.a、data.items[0].id；不支持函数、脚本、通配符或运算。HTTP 2xx 且 JSON 响应才提取；缺字段、null 或类型不匹配失败，不隐式转换。
+         * @example {
+         *       "step_id": 1,
+         *       "extract_expression": "data.a"
+         *     }
+         */
+        RestParameterSourceView: {
+            /**
+             * Format: int32
+             * @description 本任务的稳定步骤 ID；保存前必须已创建，不能引用其他任务或被移除步骤。
+             * @example 1
+             */
+            step_id: number;
+            /**
+             * @description 响应取值表达式，data.a 从 {"data":{"a":1}} 提取整数 1。
+             * @example data.a
+             */
+            extract_expression: string;
+        };
+        /**
+         * @description 参数配置详情；fixed 返回非敏感 value，rest 返回配置及接口名称，不返回缓存预览值。敏感字面绑定脱敏规则与任务步骤相同。
+         * @example {
+         *       "name": "order_id",
+         *       "value_type": "integer",
+         *       "source_type": "rest",
+         *       "rest_source": {
+         *         "step_id": 1,
+         *         "extract_expression": "data.a"
+         *       },
+         *       "sensitive": false,
+         *       "position": 1,
+         *       "redacted": false,
+         *       "interface_name": "获取订单 ID",
+         *       "file_name": "订单接口",
+         *       "current_version": 1,
+         *       "has_new_version": false,
+         *       "id": 1
+         *     }
+         */
+        GlobalParameter: {
+            /**
+             * @description 参数名称
+             * @example token
+             */
+            name: string;
+            /**
+             * @description 固定值类型
+             * @example string
+             * @enum {string}
+             */
+            value_type: "string" | "integer" | "number" | "boolean" | "object" | "array";
+            /**
+             * @description 页面和日志脱敏标记
+             * @default false
+             * @example true
+             */
+            sensitive: boolean;
+            /**
+             * @description 取值来源
+             * @example rest
+             * @enum {string}
+             */
+            source_type: "fixed" | "rest";
+            value?: components["schemas"]["Value"];
+            rest_source?: components["schemas"]["RestParameterSourceView"];
+            /**
+             * @description 初始化序号
+             * @example 1
+             */
+            position: number;
+            /**
+             * @description 敏感值是否隐藏
+             * @example false
+             */
+            redacted: boolean;
+            /**
+             * @description 所引用步骤的接口名称；取 summary，缺省使用方法和路径。
+             * @example 获取订单 ID
+             */
+            interface_name?: string;
+            /**
+             * @description 逻辑文件名称
+             * @example 订单接口
+             */
+            file_name?: string;
+            /**
+             * @description REST 源文件当前版本
+             * @example 1
+             */
+            current_version?: number;
+            /**
+             * @description 是否有新版本，仅提示
+             * @example false
+             */
+            has_new_version?: boolean;
+            /**
+             * Format: int32
+             * @description 任务参数稳定 ID，供运行快照与结果关联；更新同名参数保留 ID。
+             * @example 1
+             */
+            id: number;
         };
         /**
          * @description 敏感字面值省略 value 并返回 redacted=true。
@@ -1560,159 +1585,6 @@ export interface components {
              *     }
              */
             binding: components["schemas"]["BindingView"];
-        };
-        /**
-         * @description 引用本任务一个具体 task_steps.id，复用该步骤的接口版本及请求绑定，禁止独立接口配置。表达式支持标识符点分字段和非负数组下标，如 data.a、data.items[0].id；不支持函数、脚本、通配符或运算。HTTP 2xx 且 JSON 响应才提取；缺字段、null 或类型不匹配失败，不隐式转换。
-         * @example {
-         *       "step_id": 1,
-         *       "extract_expression": "data.a"
-         *     }
-         */
-        RestParameterSource: {
-            /**
-             * Format: int32
-             * @description 本任务的稳定步骤 ID；保存前必须已创建，不能引用其他任务或被移除步骤。
-             * @example 1
-             */
-            step_id: number;
-            /**
-             * @description 响应取值表达式，data.a 从 {"data":{"a":1}} 提取整数 1。
-             * @example data.a
-             */
-            extract_expression: string;
-        };
-        /**
-         * @description 固定参数，新建必须提供 value。未指定 source_type 时兼容固定参数。
-         * @example {
-         *       "name": "order_id",
-         *       "value_type": "integer",
-         *       "source_type": "fixed",
-         *       "value": 1,
-         *       "sensitive": false
-         *     }
-         */
-        FixedParameterInput: {
-            /**
-             * @description 参数名称
-             * @example token
-             */
-            name: string;
-            /**
-             * @description 固定值类型
-             * @example string
-             * @enum {string}
-             */
-            value_type: "string" | "integer" | "number" | "boolean" | "object" | "array";
-            /**
-             * @description 页面和日志脱敏标记
-             * @default false
-             * @example true
-             */
-            sensitive: boolean;
-            /**
-             * @description 取值来源：固定值
-             * @default fixed
-             * @example fixed
-             * @enum {string}
-             */
-            source_type: "fixed";
-            value: components["schemas"]["Value"];
-        };
-        /**
-         * @description 已有同名同类型敏感固定参数可省略 value 保留原值；新建、改名、改类型或从 REST 切换到 fixed 必须提供值。
-         * @example {
-         *       "name": "order_id",
-         *       "value_type": "integer",
-         *       "source_type": "fixed",
-         *       "value": 1,
-         *       "sensitive": false
-         *     }
-         */
-        FixedParameterEdit: {
-            /**
-             * @description 参数名称
-             * @example token
-             */
-            name: string;
-            /**
-             * @description 固定值类型
-             * @example string
-             * @enum {string}
-             */
-            value_type: "string" | "integer" | "number" | "boolean" | "object" | "array";
-            /**
-             * @description 页面和日志脱敏标记
-             * @default false
-             * @example true
-             */
-            sensitive: boolean;
-            /**
-             * @description 取值来源：固定值
-             * @default fixed
-             * @example fixed
-             * @enum {string}
-             */
-            source_type: "fixed";
-            value?: components["schemas"]["Value"];
-        };
-        /**
-         * @description REST 动态参数配置；不得提交 value。预览结果只用于界面展示，每次任务运行重新获取。
-         * @example {
-         *       "name": "order_id",
-         *       "value_type": "integer",
-         *       "source_type": "rest",
-         *       "rest_source": {
-         *         "step_id": 1,
-         *         "extract_expression": "data.a"
-         *       },
-         *       "sensitive": false
-         *     }
-         */
-        RestParameterInput: {
-            /**
-             * @description 参数名称
-             * @example token
-             */
-            name: string;
-            /**
-             * @description 固定值类型
-             * @example string
-             * @enum {string}
-             */
-            value_type: "string" | "integer" | "number" | "boolean" | "object" | "array";
-            /**
-             * @description 页面和日志脱敏标记
-             * @default false
-             * @example true
-             */
-            sensitive: boolean;
-            /**
-             * @description 取值来源：REST 动态值
-             * @example rest
-             * @enum {string}
-             */
-            source_type: "rest";
-            rest_source: components["schemas"]["RestParameterSource"];
-        };
-        /**
-         * @description 引用本任务一个具体 task_steps.id，复用该步骤的接口版本及请求绑定，禁止独立接口配置。表达式支持标识符点分字段和非负数组下标，如 data.a、data.items[0].id；不支持函数、脚本、通配符或运算。HTTP 2xx 且 JSON 响应才提取；缺字段、null 或类型不匹配失败，不隐式转换。
-         * @example {
-         *       "step_id": 1,
-         *       "extract_expression": "data.a"
-         *     }
-         */
-        RestParameterSourceView: {
-            /**
-             * Format: int32
-             * @description 本任务的稳定步骤 ID；保存前必须已创建，不能引用其他任务或被移除步骤。
-             * @example 1
-             */
-            step_id: number;
-            /**
-             * @description 响应取值表达式，data.a 从 {"data":{"a":1}} 提取整数 1。
-             * @example data.a
-             */
-            extract_expression: string;
         };
         /**
          * @description 本次参数初始化结果；REST 从引用步骤的本次响应提取，同一步骤可供多参数共享 request_id，敏感 value 省略。
@@ -1822,109 +1694,6 @@ export interface components {
              * @example null
              */
             error_message: string | null;
-        };
-        /**
-         * @description 显式预览发送真实 HTTP 请求。提交有序参数及步骤配置，步骤必须包含已保存稳定 ID，按参数初始化顺序执行所引用步骤至目标参数；同一步骤仅请求一次。仅执行初始化依赖步骤，不执行后续任务步骤，不创建任务运行或保存配置；后续运行仍重新获取。
-         * @example {
-         *       "base_url": "https://api.example.com/service",
-         *       "global_parameters": [
-         *         {
-         *           "name": "order_id",
-         *           "value_type": "integer",
-         *           "source_type": "rest",
-         *           "rest_source": {
-         *             "step_id": 1,
-         *             "extract_expression": "data.a"
-         *           },
-         *           "sensitive": false
-         *         }
-         *       ],
-         *       "parameter_name": "order_id",
-         *       "steps": [
-         *         {
-         *           "id": 1,
-         *           "interface_id": 1,
-         *           "file_id": 1,
-         *           "version": 1,
-         *           "bindings": []
-         *         }
-         *       ]
-         *     }
-         */
-        PreviewParameterRequest: {
-            /**
-             * @description HTTP/HTTPS 地址，可带路径前缀，禁止 query、fragment 和用户凭据
-             * @example https://api.example.com/service
-             */
-            base_url: string;
-            /**
-             * @description 每次请求超时秒数
-             * @default 30
-             * @example 30
-             */
-            timeout_seconds: number;
-            /**
-             * @description 完整前序参数及目标参数配置；预览必须提供固定值，敏感值不得使用占位符。
-             * @example [
-             *       {
-             *         "name": "order_id",
-             *         "value_type": "integer",
-             *         "source_type": "rest",
-             *         "rest_source": {
-             *           "step_id": 1,
-             *           "extract_expression": "data.a"
-             *         },
-             *         "sensitive": false
-             *       }
-             *     ]
-             */
-            global_parameters: components["schemas"]["GlobalParameterInput"][];
-            /**
-             * @description 需要预览的 REST 参数名称
-             * @example order_id
-             */
-            parameter_name: string;
-            /**
-             * @description 本任务已保存稳定 ID 的步骤；前序依赖和目标引用必须存在且归属本任务。
-             * @example [
-             *       {
-             *         "id": 1,
-             *         "interface_id": 1,
-             *         "file_id": 1,
-             *         "version": 1,
-             *         "bindings": []
-             *       }
-             *     ]
-             */
-            steps: components["schemas"]["StepInput"][];
-        };
-        /**
-         * @description REST 参数预览，敏感值省略 value 并返回 redacted=true；错误响应提供精确位置且不含敏感响应原值。
-         * @example {
-         *       "parameter_name": "order_id",
-         *       "value_type": "integer",
-         *       "value": 1,
-         *       "redacted": false
-         *     }
-         */
-        PreviewParameterResult: {
-            /**
-             * @description 参数名称
-             * @example order_id
-             */
-            parameter_name: string;
-            /**
-             * @description 固定值类型
-             * @example string
-             * @enum {string}
-             */
-            value_type: "string" | "integer" | "number" | "boolean" | "object" | "array";
-            value?: components["schemas"]["Value"];
-            /**
-             * @description 是否隐藏预览值
-             * @example false
-             */
-            redacted: boolean;
         };
     };
     responses: never;
@@ -2771,81 +2540,6 @@ export interface operations {
             };
             /** @description 任务名冲突、活动运行冲突或关联状态不允许操作。 */
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description 内部错误，返回脱敏说明。 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    previewRestParameter: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 项目唯一 ID；必须属于路径中的项目及文件，否则返回 404。 */
-                project_id: components["parameters"]["ProjectId"];
-                /** @description 资源必须属于路径中的项目、任务及运行，否则返回 404。 */
-                task_id: components["parameters"]["TaskId"];
-            };
-            cookie?: never;
-        };
-        /** @description 显式预览发送真实 HTTP 请求。提交有序参数及步骤配置，步骤必须包含已保存稳定 ID，按参数初始化顺序执行所引用步骤至目标参数；同一步骤仅请求一次。仅执行初始化依赖步骤，不执行后续任务步骤，不创建任务运行或保存配置；后续运行仍重新获取。 */
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PreviewParameterRequest"];
-            };
-        };
-        responses: {
-            /** @description 获取并提取成功，供界面自动填入预览值。 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PreviewParameterResult"];
-                };
-            };
-            /** @description 配置或表达式无效；不发送请求。 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description 资源不存在或归属不匹配。 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description 任务名冲突、活动运行冲突或关联状态不允许操作。 */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description 源 REST 获取或提取失败；code 区分 HTTP_STATUS_ERROR/CONNECTION_ERROR/TIMEOUT/RESPONSE_NOT_JSON/EXTRACTION_NOT_FOUND/EXTRACTION_TYPE_ERROR，issues 定位参数。 */
-            422: {
                 headers: {
                     [name: string]: unknown;
                 };

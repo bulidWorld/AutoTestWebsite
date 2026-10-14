@@ -4,7 +4,7 @@ export type TaskModel<K extends keyof components['schemas']> = components['schem
 export type ValueType = 'string' | 'integer' | 'number' | 'boolean' | 'object' | 'array'
 export type Schema = Record<string, unknown>
 export interface ParameterDraft {
-  key: number; name: string; value_type: ValueType; sensitive: boolean; text: string; retained?: TaskModel<'GlobalParameter'>
+  key: number; name: string; value_type: ValueType; sensitive: boolean; text: string; source_type?: 'fixed' | 'rest'; step_key?: number; extract_expression?: string; retained?: TaskModel<'GlobalParameter'>
 }
 export interface FieldDraft {
   key: number; location: 'path' | 'query' | 'header' | 'body'; name: string; schema: Schema; required: boolean
@@ -92,7 +92,15 @@ export function buildTask(draft: Draft): { body: TaskModel<'TaskWrite'>; issues:
     const at = `body.global_parameters[${index}]`
     if (!p.name.trim() || p.name.length > 120) issue(`${at}.name`, '名称必填，最多 120 字。')
     if (values.has(p.name)) issue(`${at}.name`, '参数名称必须唯一。')
-    const retained = !!(p.retained?.redacted && p.retained.sensitive && p.sensitive && p.retained.name === p.name && p.retained.value_type === p.value_type && !p.text)
+    if (p.source_type === 'rest') {
+      const sourceIndex = draft.steps.findIndex(s => s.key === p.step_key)
+      const source = draft.steps[sourceIndex]
+      if (!source) issue(`${at}.rest_source.step_id`, '请选择本任务中存在的来源步骤。')
+      if (!p.extract_expression || !/^[A-Za-z_][A-Za-z0-9_]*(?:(?:\.[A-Za-z_][A-Za-z0-9_]*)|(?:\[\d+\]))*$/.test(p.extract_expression)) issue(`${at}.rest_source.extract_expression`, '请输入点分字段或数组下标表达式，例如 data.items[0].id。')
+      values.set(p.name, { type: p.value_type, retained: true })
+      return { name: p.name, value_type: p.value_type, sensitive: p.sensitive, source_type: 'rest', rest_source: { ...(source?.id ? { step_id: source.id } : { step_index: sourceIndex }), extract_expression: p.extract_expression || '' } }
+    }
+    const retained = !!(p.retained?.source_type === 'fixed' && p.retained?.redacted && p.retained.sensitive && p.sensitive && p.retained.name === p.name && p.retained.value_type === p.value_type && !p.text)
     let value: unknown
     if (!retained) try { value = parseValue(p.text, p.value_type) } catch (e) { issue(`${at}.value`, (e as Error).message) }
     values.set(p.name, { type: p.value_type, value, retained })
@@ -113,7 +121,10 @@ export function buildTask(draft: Draft): { body: TaskModel<'TaskWrite'>; issues:
       if (f.kind === 'global') {
         const p = values.get(f.parameter_name)
         if (!p) issue(location, '引用的全局参数不存在。')
-        else { value = p.value; retained = p.retained; if (f.schema.type && p.type !== f.schema.type && !(f.schema.type === 'number' && p.type === 'integer')) issue(location, `全局参数类型应为 ${f.schema.type}。`) }
+        else {
+          const parameter = draft.parameters.find(p => p.name === f.parameter_name)
+          if (parameter?.source_type === 'rest' && draft.steps.findIndex(s => s.key === parameter.step_key) >= index) issue(location, '只能引用前序步骤已赋值的全局参数。')
+          value = p.value; retained = p.retained; if (f.schema.type && p.type !== f.schema.type && !(f.schema.type === 'number' && p.type === 'integer')) issue(location, `全局参数类型应为 ${f.schema.type}。`) }
       } else {
         retained = f.preserved && !!s.id
         if (!retained) try { value = parseValue(f.text, String(f.schema.type || 'string')) } catch (e) { issue(location, (e as Error).message) }

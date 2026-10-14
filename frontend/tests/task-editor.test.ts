@@ -49,3 +49,30 @@ test('reload never refills defaults or updates pinned versions',()=>{
 test('object default suppresses child defaults',()=>{
  const def=structuredClone(definition);def.request_body!.schema.default={data:{enabled:true}};assert.deepEqual(fieldsFor(def).filter(f=>f.location==='body'&&f.enabled).map(f=>f.name),[''])
 })
+
+test('REST parameters preserve stable source IDs and expressions and omit preview values', () => {
+ const d=draft(), source=d.steps[0]!
+ d.parameters.push({key:key(),name:'result',value_type:'integer',sensitive:false,text:'999',source_type:'rest',step_key:source.key,extract_expression:'data.items[0].id'})
+ const {body,issues}=buildTask(d);assert.deepEqual(issues,[])
+ assert.deepEqual(body.global_parameters[1],{name:'result',value_type:'integer',source_type:'rest',sensitive:false,rest_source:{step_id:2,extract_expression:'data.items[0].id'}})
+ delete source.id
+ const created=buildTask(d);assert.deepEqual(created.issues,[])
+ assert.deepEqual(created.body.global_parameters[1],{name:'result',value_type:'integer',source_type:'rest',sensitive:false,rest_source:{step_index:0,extract_expression:'data.items[0].id'}})
+})
+test('new REST sources use their current submission index alongside existing stable sources', () => {
+ const d=draft(), existing=d.steps[0]!, added={...existing,key:key(),id:undefined}
+ d.steps.push(added)
+ d.parameters.push({key:key(),name:'existing',value_type:'integer',sensitive:false,text:'',source_type:'rest',step_key:existing.key,extract_expression:'data.id'}, {key:key(),name:'added',value_type:'integer',sensitive:false,text:'',source_type:'rest',step_key:added.key,extract_expression:'data.id'})
+ let result=buildTask(d);assert.deepEqual(result.issues,[])
+ assert.deepEqual(result.body.global_parameters[1]!.rest_source,{step_id:2,extract_expression:'data.id'})
+ assert.deepEqual(result.body.global_parameters[2]!.rest_source,{step_index:1,extract_expression:'data.id'})
+ d.steps.reverse();result=buildTask(d);assert.deepEqual(result.issues,[])
+ assert.deepEqual(result.body.global_parameters[1]!.rest_source,{step_id:2,extract_expression:'data.id'})
+ assert.deepEqual(result.body.global_parameters[2]!.rest_source,{step_index:0,extract_expression:'data.id'})
+})
+test('REST parameters cannot reference self or later steps and cannot lose their source', () => {
+ const d=draft(), s=d.steps[0]!, p=d.parameters[0]!
+ p.source_type='rest';p.step_key=s.key;p.extract_expression='data.id'
+ assert(buildTask(d).issues.some(i=>i.reason.includes('前序')))
+ d.steps=[];assert(buildTask(d).issues.some(i=>i.location.endsWith('rest_source.step_id')))
+})
